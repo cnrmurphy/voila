@@ -6,19 +6,19 @@ import (
 	"os"
 )
 
-type Segment struct {
+type Page struct {
 	offset uint64
 	size   uint64
 }
 
 type KV struct {
-	segments   map[string]Segment
+	pages      map[string]Page
 	f          *os.File
 	lastOffset uint64
 }
 
 func NewKV() *KV {
-	return &KV{segments: make(map[string]Segment)}
+	return &KV{pages: make(map[string]Page)}
 }
 
 func (kv *KV) Connect() *os.File {
@@ -36,7 +36,7 @@ func (kv *KV) Connect() *os.File {
 
 func (kv *KV) Insert(key string, value string) error {
 	// write only for now to keep things simple - overwriting requires adjusting offsets
-	if _, ok := kv.segments[key]; ok == true {
+	if _, ok := kv.pages[key]; ok == true {
 		return fmt.Errorf("cannot overwrite existing key %s", key)
 	}
 
@@ -45,27 +45,25 @@ func (kv *KV) Insert(key string, value string) error {
 	if err != nil {
 		return err
 	}
-	segment := Segment{
+	segment := Page{
 		offset: kv.lastOffset,
 		size:   uint64(len(value)),
 	}
-	kv.segments[key] = segment
+	kv.pages[key] = segment
 	kv.lastOffset += uint64(offset)
 
 	return nil
 }
 
 func (kv *KV) Get(key string) (string, error) {
-	if segment, ok := kv.segments[key]; ok {
+	if page, ok := kv.pages[key]; ok {
 		// we may be able to store the last read offset to avoid always seeking from the start of the file
-		log.Println(key)
-		log.Println(segment)
-		_, err := kv.f.Seek(int64(segment.offset), 0)
+		_, err := kv.f.Seek(int64(page.offset), 0)
 		if err != nil {
 			log.Panic(err)
 		}
 
-		b := make([]byte, segment.size)
+		b := make([]byte, page.size)
 		_, err = kv.f.Read(b)
 
 		if err != nil {
@@ -96,7 +94,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	for k, s := range kv.segments {
+	for k, s := range kv.pages {
 		v, err := kv.Get(k)
 		if err != nil {
 			log.Fatal(err)
