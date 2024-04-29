@@ -45,11 +45,11 @@ func (kv *KV) Insert(key string, value string) error {
 	if err != nil {
 		return err
 	}
-	segment := Page{
+	page := Page{
 		offset: kv.lastOffset,
 		size:   uint64(len(value)),
 	}
-	kv.pages[key] = segment
+	kv.pages[key] = page
 	kv.lastOffset += uint64(offset)
 
 	return nil
