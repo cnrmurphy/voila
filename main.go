@@ -1,14 +1,17 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"os"
 )
 
 type Page struct {
-	offset uint64
-	size   uint64
+	keySize   uint64
+	valueSize uint64
+	offset    uint64
+	size      uint64
 }
 
 type KV struct {
@@ -40,14 +43,32 @@ func (kv *KV) Insert(key string, value string) error {
 		return fmt.Errorf("cannot overwrite existing key %s", key)
 	}
 
-	offset, err := kv.f.WriteAt([]byte(value), int64(kv.lastOffset))
+	pageBuffer := make([]byte, 0)
+
+	keySize := uint64(len(key))
+	keySizeBuffer := make([]byte, 8)
+	keyBuffer := []byte(key)
+	binary.LittleEndian.PutUint64(keySizeBuffer, keySize)
+	pageBuffer = append(pageBuffer, keySizeBuffer...)
+	pageBuffer = append(pageBuffer, keyBuffer...)
+
+	valueSize := uint64(len(value))
+	valueSizeBuffer := make([]byte, 8)
+	valueBuffer := []byte(value)
+	binary.LittleEndian.PutUint64(valueSizeBuffer, valueSize)
+	pageBuffer = append(pageBuffer, valueSizeBuffer...)
+	pageBuffer = append(pageBuffer, valueBuffer...)
+
+	offset, err := kv.f.WriteAt(pageBuffer, int64(kv.lastOffset))
 
 	if err != nil {
 		return err
 	}
 	page := Page{
-		offset: kv.lastOffset,
-		size:   uint64(len(value)),
+		offset:    kv.lastOffset,
+		size:      uint64(len(keyBuffer)) + uint64(len(valueBuffer)) + 16,
+		valueSize: uint64(len(value)),
+		keySize:   uint64(len(key)),
 	}
 	kv.pages[key] = page
 	kv.lastOffset += uint64(offset)
@@ -57,20 +78,23 @@ func (kv *KV) Insert(key string, value string) error {
 
 func (kv *KV) Get(key string) (string, error) {
 	if page, ok := kv.pages[key]; ok {
+		valueOffset := page.offset + 8 + page.keySize + 8
+
 		// we may be able to store the last read offset to avoid always seeking from the start of the file
-		_, err := kv.f.Seek(int64(page.offset), 0)
+		_, err := kv.f.Seek(int64(valueOffset), 0)
 		if err != nil {
 			log.Panic(err)
 		}
 
-		b := make([]byte, page.size)
-		_, err = kv.f.Read(b)
+		valueBuf := make([]byte, page.valueSize)
+
+		err = binary.Read(kv.f, binary.LittleEndian, valueBuf)
 
 		if err != nil {
 			log.Panic(err)
 		}
 
-		return string(b), nil
+		return string(valueBuf), nil
 	} else {
 		return "", fmt.Errorf("cannot find key %s", key)
 	}
