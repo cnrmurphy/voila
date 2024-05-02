@@ -39,9 +39,6 @@ func (kv *KV) Connect() *os.File {
 
 func (kv *KV) Insert(key string, value string) error {
 	// write only for now to keep things simple - overwriting requires adjusting offsets
-	if _, ok := kv.pages[key]; ok == true {
-		return fmt.Errorf("cannot overwrite existing key %s", key)
-	}
 
 	pageBuffer := make([]byte, 0)
 
@@ -50,13 +47,14 @@ func (kv *KV) Insert(key string, value string) error {
 	keyBuffer := []byte(key)
 	binary.LittleEndian.PutUint64(keySizeBuffer, keySize)
 	pageBuffer = append(pageBuffer, keySizeBuffer...)
-	pageBuffer = append(pageBuffer, keyBuffer...)
 
 	valueSize := uint64(len(value))
 	valueSizeBuffer := make([]byte, 8)
 	valueBuffer := []byte(value)
 	binary.LittleEndian.PutUint64(valueSizeBuffer, valueSize)
 	pageBuffer = append(pageBuffer, valueSizeBuffer...)
+
+	pageBuffer = append(pageBuffer, keyBuffer...)
 	pageBuffer = append(pageBuffer, valueBuffer...)
 
 	offset, err := kv.f.WriteAt(pageBuffer, int64(kv.lastOffset))
@@ -78,7 +76,7 @@ func (kv *KV) Insert(key string, value string) error {
 
 func (kv *KV) Get(key string) (string, error) {
 	if page, ok := kv.pages[key]; ok {
-		valueOffset := page.offset + 8 + page.keySize + 8
+		valueOffset := page.offset + 8 + 8 + page.keySize
 
 		// we may be able to store the last read offset to avoid always seeking from the start of the file
 		_, err := kv.f.Seek(int64(valueOffset), 0)
