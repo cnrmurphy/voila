@@ -2,11 +2,24 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 )
 
+// Page represents the layout of data on disk.
+// A Page on disk contains the following in order: key size, value size, value and data.
+//
+//	*----------*------------*----------*----------*
+//	|        Header         |         Data        |
+//	*----------*------------*----------*----------*
+//	| 8 bytes  | 8 bytes    | 64 bytes | 64 bytes |
+//	*----------*------------*----------*----------*
+//	| Key Size | Value Size | Key      | Value    |
+//	*----------*------------*----------*----------*
+//
+// Because we only store keys in memory, the value is omitted from the Page struct.
 type Page struct {
 	keySize   uint64
 	valueSize uint64
@@ -69,7 +82,6 @@ func (kv *KV) loadFromStorage() {
 		}
 		offset += int64(n)
 		key := string(keyBuf)
-		log.Println(key)
 
 		n, err = kv.f.ReadAt(valueBuf, offset)
 		if err != nil {
@@ -86,7 +98,7 @@ func (kv *KV) loadFromStorage() {
 	}
 }
 
-func (kv *KV) Insert(key string, value string) error {
+func (kv *KV) Insert(key string, value []byte) error {
 	pageBuffer := make([]byte, 0)
 
 	keySize := uint64(len(key))
@@ -125,7 +137,6 @@ func (kv *KV) Get(key string) (string, error) {
 	if page, ok := kv.pages[key]; ok {
 		valueOffset := page.offset + 8 + 8 + page.keySize
 
-		// we may be able to store the last read offset to avoid always seeking from the start of the file
 		_, err := kv.f.Seek(int64(valueOffset), 0)
 		if err != nil {
 			log.Panic(err)
@@ -150,7 +161,19 @@ func main() {
 	f := kv.Connect()
 	defer f.Close()
 
-	kv.loadFromStorage()
+	err := kv.Insert("hello", []byte("world"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = kv.Insert("foo", []byte("bar"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = kv.Insert("go", []byte("golang"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	for k, s := range kv.pages {
 		v, err := kv.Get(k)
 		if err != nil {
@@ -158,29 +181,4 @@ func main() {
 		}
 		log.Printf("GET key %s at offset %d -> VALUE %s", k, s.offset, v)
 	}
-
-	log.Println(kv)
-
-	/*
-		err := kv.Insert("hello", "world")
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = kv.Insert("foo", "bar")
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = kv.Insert("go", "golang")
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		for k, s := range kv.pages {
-			v, err := kv.Get(k)
-			if err != nil {
-				log.Fatal(err)
-			}
-			log.Printf("GET key %s at offset %d -> VALUE %s", k, s.offset, v)
-		}
-	*/
 }
