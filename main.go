@@ -10,13 +10,13 @@ import (
 // Page represents the layout of data on disk.
 // A Page on disk contains the following in order: key size, value size, value and data.
 //
-//	*----------*------------*----------*----------*
-//	|        Header         |         Data        |
-//	*----------*------------*----------*----------*
-//	| 8 bytes  | 8 bytes    | 64 bytes | 64 bytes |
-//	*----------*------------*----------*----------*
-//	| Key Size | Value Size | Key      | Value    |
-//	*----------*------------*----------*----------*
+//	+----------+------------+-----------+-----------+
+//	|        Header         |         Data          |
+//	+----------+------------+-----------+-----------+
+//	| 8 bytes  | 8 bytes    | *64 bytes | *64 bytes |
+//	+----------+------------+-----------+-----------+
+//	| Key Size | Value Size | Key       | Value     |
+//	+----------+------------+-----------+-----------+
 //
 // Because we only store keys in memory, the value is omitted from the Page struct.
 type Page struct {
