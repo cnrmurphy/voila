@@ -1,9 +1,8 @@
-package main
+package voila
 
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"os"
 )
 
@@ -26,30 +25,39 @@ type Page struct {
 	size      uint64
 }
 
-type KV struct {
+// DB represents the key-value database instance
+type DB struct {
 	pages      map[string]Page
 	f          *os.File
 	lastOffset uint64
 }
 
-func NewKV() *KV {
-	return &KV{pages: make(map[string]Page)}
+// New creates a new database instance
+func New() *DB {
+	return &DB{pages: make(map[string]Page)}
 }
 
-func (kv *KV) Connect() *os.File {
-	f, err := os.OpenFile("db.db", os.O_CREATE|os.O_RDWR, os.ModePerm)
-
+// Open opens or creates a database file and loads existing data
+func (db *DB) Open(filename string) error {
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR, os.ModePerm)
 	if err != nil {
-		log.Println("could not open database file for writing")
-		log.Fatal(err)
+		return fmt.Errorf("could not open database file: %w", err)
 	}
 
-	log.Println("database connected")
-	kv.f = f
-	return f
+	db.f = f
+	db.loadFromStorage()
+	return nil
 }
 
-func (kv *KV) loadFromStorage() {
+// Close closes the database file
+func (db *DB) Close() error {
+	if db.f != nil {
+		return db.f.Close()
+	}
+	return nil
+}
+
+func (db *DB) loadFromStorage() {
 	var keySize uint64
 	var valueSize uint64
 	var offset int64
@@ -59,14 +67,14 @@ func (kv *KV) loadFromStorage() {
 		keySizeBuf := make([]byte, 8)
 		valueSizeBuf := make([]byte, 8)
 
-		n, err := kv.f.ReadAt(keySizeBuf, offset)
+		n, err := db.f.ReadAt(keySizeBuf, offset)
 		if err != nil {
 			return
 		}
 		offset += int64(n)
 		keySize = binary.LittleEndian.Uint64(keySizeBuf)
 
-		n, err = kv.f.ReadAt(valueSizeBuf, offset)
+		n, err = db.f.ReadAt(valueSizeBuf, offset)
 		if err != nil {
 			return
 		}
@@ -75,29 +83,34 @@ func (kv *KV) loadFromStorage() {
 
 		keyBuf := make([]byte, keySize)
 		valueBuf := make([]byte, valueSize)
-		n, err = kv.f.ReadAt(keyBuf, offset)
+		n, err = db.f.ReadAt(keyBuf, offset)
 		if err != nil {
 			return
 		}
 		offset += int64(n)
 		key := string(keyBuf)
 
-		n, err = kv.f.ReadAt(valueBuf, offset)
+		n, err = db.f.ReadAt(valueBuf, offset)
 		if err != nil {
 			return
 		}
 		offset += int64(n)
-		value := string(valueBuf)
-		log.Println(value)
+
 		page.keySize = keySize
 		page.valueSize = valueSize
 		page.size = keySize + valueSize + 8 + 8
 		page.offset = uint64(offset) - page.size
-		kv.pages[key] = page
+		db.pages[key] = page
+		db.lastOffset = uint64(offset)
 	}
 }
 
-func (kv *KV) Insert(key string, value []byte) error {
+// Insert adds a new key-value pair to the database
+func (db *DB) Insert(key string, value []byte) error {
+	if db.f == nil {
+		return fmt.Errorf("database not opened")
+	}
+
 	pageBuffer := make([]byte, 0)
 
 	keySize := uint64(len(key))
@@ -115,69 +128,61 @@ func (kv *KV) Insert(key string, value []byte) error {
 	pageBuffer = append(pageBuffer, keyBuffer...)
 	pageBuffer = append(pageBuffer, valueBuffer...)
 
-	offset, err := kv.f.WriteAt(pageBuffer, int64(kv.lastOffset))
-
+	_, err := db.f.WriteAt(pageBuffer, int64(db.lastOffset))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write to database: %w", err)
 	}
+
 	page := Page{
-		offset:    kv.lastOffset,
+		offset:    db.lastOffset,
 		size:      uint64(len(keyBuffer)) + uint64(len(valueBuffer)) + 16,
 		valueSize: uint64(len(value)),
 		keySize:   uint64(len(key)),
 	}
-	kv.pages[key] = page
-	kv.lastOffset += uint64(offset)
+	db.pages[key] = page
+	db.lastOffset += uint64(len(pageBuffer))
 
 	return nil
 }
 
-func (kv *KV) Get(key string) (string, error) {
-	if page, ok := kv.pages[key]; ok {
-		valueOffset := page.offset + 8 + 8 + page.keySize
-
-		_, err := kv.f.Seek(int64(valueOffset), 0)
-		if err != nil {
-			log.Panic(err)
-		}
-
-		valueBuf := make([]byte, page.valueSize)
-
-		err = binary.Read(kv.f, binary.LittleEndian, valueBuf)
-
-		if err != nil {
-			log.Panic(err)
-		}
-
-		return string(valueBuf), nil
-	} else {
-		return "", fmt.Errorf("cannot find key %s", key)
+// Get retrieves a value by key from the database
+func (db *DB) Get(key string) ([]byte, error) {
+	if db.f == nil {
+		return nil, fmt.Errorf("database not opened")
 	}
+
+	page, ok := db.pages[key]
+	if !ok {
+		return nil, fmt.Errorf("key not found: %s", key)
+	}
+
+	valueOffset := page.offset + 8 + 8 + page.keySize
+
+	_, err := db.f.Seek(int64(valueOffset), 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to seek to value: %w", err)
+	}
+
+	valueBuf := make([]byte, page.valueSize)
+	err = binary.Read(db.f, binary.LittleEndian, valueBuf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read value: %w", err)
+	}
+
+	return valueBuf, nil
 }
 
-func main() {
-	kv := NewKV()
-	f := kv.Connect()
-	defer f.Close()
+// Keys returns all keys in the database
+func (db *DB) Keys() []string {
+	keys := make([]string, 0, len(db.pages))
+	for k := range db.pages {
+		keys = append(keys, k)
+	}
+	return keys
+}
 
-	err := kv.Insert("hello", []byte("world"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = kv.Insert("foo", []byte("bar"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = kv.Insert("go", []byte("golang"))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for k, s := range kv.pages {
-		v, err := kv.Get(k)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("GET key %s at offset %d -> VALUE %s", k, s.offset, v)
-	}
+// Exists checks if a key exists in the database
+func (db *DB) Exists(key string) bool {
+	_, exists := db.pages[key]
+	return exists
 }
